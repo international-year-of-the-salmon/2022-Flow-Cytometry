@@ -1,0 +1,291 @@
+---
+title: "2022-Flow-Cytometry"
+author: "Tim van der Stap"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+library(tidyverse)
+library(lubridate)
+library(worrms)
+library(dplyr)
+library(obistools)
+library(readxl)
+library(parsedate)
+library(googledrive)
+library(here)
+library(Hmisc)
+```
+
+## Download required files from other public repositories:
+```{r download, eval = FALSE}
+download.file("https://github.com/international-year-of-the-salmon/2022-Franklin-CTD-Rosette/blob/main/IYS_Data_Template/IYS_Data_Template.xlsx?raw=true", here::here("original_data", "IYS2022_Franklin_Data.xlsx"), quiet = TRUE, mode = "wb")
+```
+
+## Read in files:
+
+``` {r read_file, warning = FALSE}
+# For TINRO metadata + data:
+fc_tinro <- read_excel(here("original_data", "2022 IYS Flow Cytometry data by cruise.xlsx"), sheet = "Tinru")
+fc_tinro <- fc_tinro[-33,]
+
+# For Shimada metadata + data:
+fc_shimada <- read_excel(here("original_data", "2022 IYS Flow Cytometry data by cruise.xlsx"), sheet = "Shimada")
+
+# For Franklin metadata + data - metadata can be inferred from the CTD data, as per Lisa Eisner: 
+fc_franklin <- read_excel(here("original_data", "2022 IYS Flow Cytometry data by cruise.xlsx"), sheet = "Franklin")
+fc_franklin <- fc_franklin[2:71,]
+fc_franklin_meta <- read_excel(here("original_data", "IYS2022_Franklin_Data.xlsx"), sheet = "3. SAMPLING EVENT INFO")
+```
+
+Create Event Core: 
+
+```{r event, eval = FALSE}
+# For the TINRO data:
+tinro_event <- fc_tinro %>%
+  select(Cruise, Station, 
+         decimalLatitude = `Latitude (N)`, 
+         decimalLongitude = `Longitude (E)`, 
+         `Date (YYYYMMDD)`, `Time GMT(HHMM)`, 
+         maximumDepthInMeters = `Nominal Depth [m]`) %>%
+  mutate(zone = 3,
+         event_type = "FC",
+         eventID = paste("IYS2022", "TINRO", zone, Station, event_type, maximumDepthInMeters, sep = "-"),
+         Time = format(`Time GMT(HHMM)`, "%H:%M"),
+         Date = as.Date(as.character(`Date (YYYYMMDD)`), format = "%Y%m%d"),
+         eventDate = format_iso_8601(as.POSIXct(paste(Date, Time),
+                                                format = "%Y-%m-%d %H:%M",
+                                                tz = "UTC")),
+         eventDate = str_replace(eventDate, "\\+00:00", "Z"))
+
+tinro_event$Year <- as.numeric(format(as.Date(tinro_event$eventDate), "%Y"))
+tinro_event$Month <- as.numeric(format(as.Date(tinro_event$eventDate), "%m"))
+tinro_event$Day <- as.numeric(format(as.Date(tinro_event$eventDate), "%d"))
+
+tinro_event <- tinro_event %>%
+  select(eventID, eventDate, Year, Month, Day, decimalLatitude, decimalLongitude, maximumDepthInMeters)
+
+# For the Shimada data:
+shimada_event <- fc_shimada %>%
+  select(Cruise, Station, 
+         decimalLatitude = `Latitude (N)`,
+         decimalLongitude = `Longitude (E)`,
+         `Date (YYYYMMDD)`, `Time GMT(HHMM)`,
+         maximumDepthInMeters = `Nominal Depth [m]`) %>%
+  mutate(zone = 4,
+         event_type = "FC",
+         eventID = paste("IYS2022", "Shimada", zone, Station, event_type, maximumDepthInMeters, sep = "-"),
+         Time = format(`Time GMT(HHMM)`, "%H:%M"),
+         Date = as.Date(as.character(`Date (YYYYMMDD)`), format = "%Y%m%d"),
+         eventDate = format_iso_8601(as.POSIXct(paste(Date, Time),
+                                                format = "%Y-%m-%d %H:%M",
+                                                tz = "UTC")),
+         eventDate = str_replace(eventDate, "\\+00:00", "Z"))
+
+shimada_event$Year <- as.numeric(format(as.Date(shimada_event$eventDate), "%Y"))
+shimada_event$Month <- as.numeric(format(as.Date(shimada_event$eventDate), "%m"))
+shimada_event$Day <- as.numeric(format(as.Date(shimada_event$eventDate), "%d"))
+
+shimada_event <- shimada_event %>%
+  select(eventID, eventDate, Year, Month, Day, decimalLatitude, decimalLongitude, maximumDepthInMeters)
+
+# For the Franklin data:
+franklin_event <- fc_franklin %>%
+  select(Cruise,
+         Station = `Station #`) %>%
+  mutate(zone = 5,
+         event_type = "FC",
+         maximumDepthInMeters = rep(c(25,50), times = 35),
+         eventID = paste("IYS2022", "Franklin", zone, Station, event_type, maximumDepthInMeters, sep = "-"))
+
+franklin_meta <- fc_franklin_meta %>% filter(Event_Type == "CTD_Rosette") %>%
+  select(Time_Start_UTC, Year, Month, Day, Latitude_Start_DecDeg, Longitude_Start_DecDeg, Bottom_Depth_Start) %>%
+  mutate(Month = ifelse(Month == "Feb", 2, 3),
+         Time = regmatches(Time_Start_UTC, regexpr("T\\s*\\K.*?(?=\\s*Z)", Time_Start_UTC, perl=TRUE)),
+         Date = as.Date(as.character(paste(Year, Month, Day, sep = "-"))),
+         eventDate =format_iso_8601(as.POSIXct(paste(Date, Time),
+                                               format = "%Y-%m-%d %H:%M:%S",
+                                               tz = "UTC")),
+         eventDate = str_replace(eventDate, "\\+00:00", "Z")) %>%
+  slice(rep(1:n(), each = 2)) # Duplicate each row because there were measurements at 25 and 50m, which we need to cbind later
+
+# Final franklin metadata data table:
+franklin_meta <- cbind(franklin_event, franklin_meta) %>%
+  select(eventID, eventDate, Year, Month, Day, 
+         decimalLatitude = Latitude_Start_DecDeg,
+         decimalLongitude = Longitude_Start_DecDeg,
+         maximumDepthInMeters)
+
+# Combine dataframe into single event core:
+fc_event <- rbind(tinro_event, shimada_event, franklin_meta)
+
+fc_event <- fc_event %>% 
+  mutate(language = "en",
+         modified = lubridate::today(),
+         minimumDepthInMeters = maximumDepthInMeters,
+         license = "https://creativecommons.org/licenses/by/4.0/legalcode",
+         footprintWKT = paste("POINT", " (", fc_event$decimalLongitude, " ", fc_event$decimalLatitude, ")"),
+         geodeticDatum = "WGS84",
+         datasetDOI = "https://doi.org/10.21966/j26w-by50",
+         bibliographicCitation = "Eisner, L. B., & Lomas, M. W. (2022). Flow Cytometry data from the R/V TINRO, NOAA Bell M. Shimada and CCGS Sir John Franklin during the 2022 International Year of the Salmon Pan-Pacific Winter High Seas Expedition [Data set]. North Pacific Anadromous Fish Commission. https://doi.org/10.21966/j26w-by50",
+         institutionCode = "NOAA",
+         institutionID = "https://edmo.seadatanet.org/report/3588",
+         sampleSizeValue = 0.5,
+         sampleSizeUnit = "millilitres",
+         samplingProtocol = "https://doi.org/10.1016/j.dsr2.2012.02.011")
+
+# Save locally: 
+write_csv(fc_event, here("standardized_data", "fc2022_event.csv"))
+fc_event[duplicated(fc_event$eventID),] # should be none. 
+
+```
+
+Next, create the occurrence extension:
+
+```{r occurrence}
+# For Tinro:
+fc_tinro_occ <- fc_tinro %>%
+  mutate(zone = 3,
+         event_type = "FC",
+         eventID = paste("IYS2022", "TINRO", zone, Station, event_type, `Nominal Depth [m]`, sep = "-")) %>%
+  select(eventID,`Synechococcus [cells/ml]`:`Cryptophytes [cells/ml]`) %>%
+  pivot_longer(`Synechococcus [cells/ml]`:`Cryptophytes [cells/ml]`,
+               names_to = "species",
+               values_to = "cells/ml")
+
+# For Shimada:
+fc_shimada_occ <- fc_shimada %>%
+  mutate(zone = 4,
+         event_type = "FC",
+         eventID = paste("IYS2022", "Shimada", zone, Station, event_type, 
+                         `Nominal Depth [m]`, sep = "-")) %>%
+  select(eventID, `Synechococcus [cells/ml]`:`Cryptophytes [cells/ml]`) %>%
+  pivot_longer(`Synechococcus [cells/ml]`:`Cryptophytes [cells/ml]`,
+               names_to = "species", 
+               values_to = "cells/ml")
+
+# For Franklin:
+# Add column for depth at which sampling took place, which according to Lisa Eisner for the Franklin was 5m.
+# The Franklin took replicate samples, whereas the Shimada took samples at 5, 25, and 50, and the TINRO only at approximately 5m. 
+
+fc_franklin_occ <- fc_franklin %>%
+  mutate(zone = 5,
+         event_type = "FC",
+         sampling_depth = 5,
+         eventID = paste("IYS2022", "Franklin", zone, `Station #`, event_type, 
+                         sampling_depth, Sample, sep = "-")) %>%
+  select(eventID, `Synechococcus [cells/ml]`:`Cryptophytes [cells/ml]`) %>%
+  pivot_longer(`Synechococcus [cells/ml]`:`Cryptophytes [cells/ml]`,
+               names_to = "species",
+               values_to = "cells/ml")
+
+# Combine occurrence
+fc_occ <- rbind(fc_tinro_occ, fc_shimada_occ, fc_franklin_occ) %>%
+  rename(scientificName = species)
+
+fc_occ$scientificName <- gsub("\\[.*?\\]","", as.character(fc_occ$scientificName)) %>% trimws()
+fc_occ$verbatimIdentification <- fc_occ$scientificName
+
+# Change scientificName:
+fc_occ$scientificName <- gsub("Picoeukaryotes", "Eukaryota", fc_occ$scientificName)
+fc_occ$scientificName <- gsub("Nanoeukaryotes", "Eukaryota", fc_occ$scientificName)
+fc_occ$scientificName <- gsub("Cryptophytes", "Cryptophyta", fc_occ$scientificName)
+
+fc_occ <- fc_occ %>%
+  mutate(
+    occurrenceID = paste(eventID, row_number(), sep = "-"),
+    scientificNameID = case_when(
+    scientificName == "Synechococcus" ~ "urn:lsid:marinespecies.org:taxname:160572",
+    scientificName == "Eukaryota" ~ "urn:lsid:algaebase.org:taxname:86701",
+    scientificName == "Cryptophyta" ~ "urn:lsid:marinespecies.org:taxname:17638"),
+    occurrenceStatus = "present",
+    basisOfRecord = "MachineObservation",
+    recordedBy = "Michael W. Lomas")
+
+# Save locally: 
+write_csv(fc_occ, here("standardized_data", "fc2022_occurrence.csv"))
+fc_occ[duplicated(fc_occ$occurrenceID),] # should be none. 
+```
+
+Create extended measurement or fact (eMOF) extension:
+
+```{r emof}
+# For TINRO:
+fc_tinro_emof <- fc_tinro %>%
+  mutate(zone = 3,
+         event_type = "FC",
+         eventID = paste("IYS2022", "TINRO", zone, Station, event_type, `Nominal Depth [m]`, sep = "-")) %>%
+  select(eventID,`Synechococcus [cells/ml]`:`Crypto biomass (ug C/ml)`)
+
+fc_shimada_emof <- fc_shimada %>%
+  mutate(zone = 4, 
+         event_type = "FC",
+         eventID = paste("IYS2022", "Shimada", zone, Station, event_type, 
+                         `Nominal Depth [m]`, sep = "-")) %>%
+  select(eventID,`Synechococcus [cells/ml]`:`Crypto biomass (ug C/ml)`)
+
+fc_franklin_emof <- fc_franklin %>%
+  mutate(zone = 5,
+         `Nominal Depth [m]` = 5,
+         event_type = "FC",
+         eventID = paste("IYS2022", "Franklin", zone, `Station #`, 
+                         event_type, `Nominal Depth [m]`, Sample, sep = "-")) %>%
+  select(eventID,`Synechococcus [cells/ml]`:`Crypto biomass (ug C/ml)`) %>%
+  rename(`Syn biomass (ug C/L)` = `Synechococcus biomass (ug C/L)`)
+
+# Combine these into extended measurement of facts dataframe:
+fc_emof <- rbind(fc_tinro_emof, fc_shimada_emof, fc_franklin_emof)
+fc_emof <- fc_emof %>%
+  mutate_all(as.character) %>%
+  pivot_longer(`Synechococcus [cells/ml]`:`Crypto biomass (ug C/ml)`,
+               names_to = "species",
+               values_to = "value") %>%
+  mutate(species = gsub("[", "(", species, fixed = TRUE),
+         species = gsub("]", ")", species, fixed = TRUE),
+         unit_of_measurement = gsub("[\\(\\)]", "", regmatches(species, 
+                                                               gregexpr("(?<=\\().*?(?=\\))", species,
+                                                                        perl=T))),
+         species = gsub("\\s*\\([^\\)]+\\)","", species),
+         species = gsub("Syn biomass", "Synechococcus", species),
+         species = gsub("Picoeuk biomass", "Picoeukaryotes", species),
+         species = gsub("Nano euk biomass", "Nanoeukaryotes", species),
+         species = gsub("Crypto biomass", "Cryptophytes", species))
+
+fc_emof <- fc_emof %>%
+  pivot_wider(names_from = unit_of_measurement,
+              values_from = value) %>%
+  mutate(microbial_fc_group_name = case_when(
+    species == "Synechococcus" ~ "OraPicoProk",
+    species == "Picoeukaryotes" ~ "RedPico",
+    species == "Nanoeukaryotes" ~ "RedRedNano",
+    species == "Cryptophytes" ~ "OraNano"))
+
+fc_emof <- fc_emof %>%
+  mutate_all(as.character) %>%
+  pivot_longer(`cells/ml`:microbial_fc_group_name,
+               names_to = "measurementType",
+               values_to = "measurementValue") %>%
+  mutate(measurementValueID = case_when(
+    measurementValue == "OraPicoProk" ~ "http://vocab.nerc.ac.uk/collection/F02/current/F0200003/",
+    measurementValue == "RedPico" ~ "http://vocab.nerc.ac.uk/collection/F02/current/F0200004/",
+    measurementValue == "OraNano" ~ "http://vocab.nerc.ac.uk/collection/F02/current/F0200006/",
+    measurementValue == "RedRedNano" ~ "http://vocab.nerc.ac.uk/collection/F02/current/F0200005/"),
+        measurementUnitID = case_when(
+    measurementType == "cells/ml" ~ "http://vocab.nerc.ac.uk/collection/P06/current/UCML/",
+    measurementType == "fg POC/cell" ~ " ",
+    measurementType == "ug C/L" ~ "http://vocab.nerc.ac.uk/collection/P06/current/UGPL/",
+    measurementType == "ug C/ml" ~ "http://vocab.nerc.ac.uk/collection/P06/current/UUGS/"),
+        measurementType = case_when(
+    measurementType == "cells/ml" ~ "Concentration of cells per volume",
+    measurementType %in% c("ug C/L", "ug C/ml") ~ "Biomass as carbon per unit volume",
+    measurementType == "fg POC/cell" ~ "Particulate Organic Carbon per cell")) %>%
+  select(-species) %>%
+  mutate(measurementID = paste(eventID, row_number(), sep = "-"))
+
+# Save locally: 
+write_csv(fc_emof, here("standardized_data", "fc2022_emof.csv"))
+fc_emof[duplicated(fc_emof$measurementID),] # should be none. 
+
+```
