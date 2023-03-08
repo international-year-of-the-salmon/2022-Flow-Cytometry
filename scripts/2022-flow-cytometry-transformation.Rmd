@@ -97,7 +97,7 @@ franklin_event <- fc_franklin %>%
          Station = `Station #`) %>%
   mutate(zone = 5,
          event_type = "FC",
-         maximumDepthInMeters = rep(c(25,50), times = 35),
+         maximumDepthInMeters = 5,
          eventID = paste("IYS2022", "Franklin", zone, Station, event_type, maximumDepthInMeters, sep = "-"))
 
 franklin_meta <- fc_franklin_meta %>% filter(Event_Type == "CTD_Rosette") %>%
