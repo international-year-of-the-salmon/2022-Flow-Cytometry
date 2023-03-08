@@ -94,11 +94,13 @@ shimada_event <- shimada_event %>%
 # For the Franklin data:
 franklin_event <- fc_franklin %>%
   select(Cruise,
-         Station = `Station #`) %>%
+         Station = `Station #`,
+         Sample) %>%
   mutate(zone = 5,
          event_type = "FC",
          maximumDepthInMeters = 5,
-         eventID = paste("IYS2022", "Franklin", zone, Station, event_type, maximumDepthInMeters, sep = "-"))
+         eventID = paste("IYS2022", "Franklin", zone, Station, event_type, 
+                         maximumDepthInMeters, Sample, sep = "-"))
 
 franklin_meta <- fc_franklin_meta %>% filter(Event_Type == "CTD_Rosette") %>%
   select(Time_Start_UTC, Year, Month, Day, Latitude_Start_DecDeg, Longitude_Start_DecDeg, Bottom_Depth_Start) %>%
