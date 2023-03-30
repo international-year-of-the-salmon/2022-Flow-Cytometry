@@ -307,6 +307,10 @@ fc_emof <- fc_emof %>%
   mutate(measurementID = paste(occurrenceID, row_number(), sep = "-")) %>%
   ungroup()
 
+fc_emof <- sapply(fc_emof, as.character)
+fc_emof[is.na(fc_emof)] <- ""
+fc_emof <- as_tibble(fc_emof)
+
 # Save locally: 
 write_csv(fc_emof, here("standardized_data", "fc2022_emof.csv"))
 fc_emof[duplicated(fc_emof$measurementID),] # should be none. 
