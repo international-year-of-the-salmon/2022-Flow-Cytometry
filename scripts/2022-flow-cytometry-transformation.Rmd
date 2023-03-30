@@ -244,10 +244,6 @@ fc_franklin_emof <- fc_franklin %>%
 # Combine these into extended measurement of facts dataframe:
 fc_emof <- rbind(fc_tinro_emof, fc_shimada_emof, fc_franklin_emof)
 
-# Grab the eventID and occurrenceID from the fc_occ dataframe:
-occ <- fc_occ %>% select(eventID, occurrenceID)
-fc_emof <- left_join(fc_emof, occ, by = "eventID")
-
 fc_emof <- fc_emof %>%
   mutate_all(as.character) %>%
   pivot_longer(`Synechococcus [cells/ml]`:`Crypto biomass (ug C/ml)`,
@@ -263,6 +259,11 @@ fc_emof <- fc_emof %>%
          species = gsub("Picoeuk biomass", "Picoeukaryotes", species),
          species = gsub("Nano euk biomass", "Nanoeukaryotes", species),
          species = gsub("Crypto biomass", "Cryptophytes", species))
+
+# We'll need to connect measurements to occurrence. For this, we need to grab eventID, occurrenceID and the verbatimIdentification(!) from the fc_occ data table. 
+occ <- fc_occ %>% select(eventID, occurrenceID, verbatimIdentification) %>%
+  rename(species = verbatimIdentification)
+fc_emof <- left_join(fc_emof, occ, by = c("eventID", "species"))
 
 fc_emof <- fc_emof %>%
   pivot_wider(names_from = unit_of_measurement,
@@ -302,7 +303,9 @@ fc_emof <- fc_emof %>%
     measurementType == "Biomass as carbon per unit volume" ~ " ", #TODO: Update with https://github.com/nvs-vocabs/P01/issues/195 resolution
     measurementType == "Particulate Organic Carbon per cell" ~ " ")) %>% #TODO: Update with https://github.com/nvs-vocabs/P01/issues/194 resolution)) %>%
   select(-species) %>%
-  mutate(measurementID = paste(occurrenceID, row_number(), sep = "-"))
+  group_by(occurrenceID) %>%
+  mutate(measurementID = paste(occurrenceID, row_number(), sep = "-")) %>%
+  ungroup()
 
 # Save locally: 
 write_csv(fc_emof, here("standardized_data", "fc2022_emof.csv"))
