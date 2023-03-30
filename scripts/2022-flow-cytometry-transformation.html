@@ -11,7 +11,7 @@
 
 <meta name="author" content="Tim van der Stap" />
 
-<meta name="date" content="2023-01-10" />
+<meta name="date" content="2023-03-30" />
 
 <title>2022-Flow-Cytometry</title>
 
@@ -358,16 +358,28 @@ display: none;
 
 <h1 class="title toc-ignore">2022-Flow-Cytometry</h1>
 <h4 class="author">Tim van der Stap</h4>
-<h4 class="date">2023-01-10</h4>
+<h4 class="date">2023-03-30</h4>
 
 </div>
 
 
+<div id="download-required-files-from-other-public-repositories" class="section level2">
+<h2>Download required files from other public repositories:</h2>
+<pre class="r"><code>download.file(&quot;https://github.com/international-year-of-the-salmon/2022-Franklin-CTD-Rosette/blob/main/IYS_Data_Template/IYS_Data_Template.xlsx?raw=true&quot;, here::here(&quot;original_data&quot;, &quot;IYS2022_Franklin_Data.xlsx&quot;), quiet = TRUE, mode = &quot;wb&quot;)</code></pre>
+</div>
 <div id="read-in-files" class="section level2">
 <h2>Read in files:</h2>
-<pre class="r"><code>fc_tinro &lt;- read_excel(here(&quot;original_data&quot;, &quot;2022 IYS Flow Cytometry data by cruise.xlsx&quot;), sheet = &quot;Tinru&quot;)
+<pre class="r"><code># For TINRO metadata + data:
+fc_tinro &lt;- read_excel(here(&quot;original_data&quot;, &quot;2022 IYS Flow Cytometry data by cruise.xlsx&quot;), sheet = &quot;Tinru&quot;)
+fc_tinro &lt;- fc_tinro[-33,]
+
+# For Shimada metadata + data:
 fc_shimada &lt;- read_excel(here(&quot;original_data&quot;, &quot;2022 IYS Flow Cytometry data by cruise.xlsx&quot;), sheet = &quot;Shimada&quot;)
-fc_franklin &lt;- read_excel(here(&quot;original_data&quot;, &quot;2022 IYS Flow Cytometry data by cruise.xlsx&quot;), sheet = &quot;Franklin&quot;)</code></pre>
+
+# For Franklin metadata + data - metadata can be inferred from the CTD data, as per Lisa Eisner: 
+fc_franklin &lt;- read_excel(here(&quot;original_data&quot;, &quot;2022 IYS Flow Cytometry data by cruise.xlsx&quot;), sheet = &quot;Franklin&quot;)
+fc_franklin &lt;- fc_franklin[2:71,]
+fc_franklin_meta &lt;- read_excel(here(&quot;original_data&quot;, &quot;IYS2022_Franklin_Data.xlsx&quot;), sheet = &quot;3. SAMPLING EVENT INFO&quot;)</code></pre>
 <p>Create Event Core:</p>
 <pre class="r"><code># For the TINRO data:
 tinro_event &lt;- fc_tinro %&gt;%
@@ -420,13 +432,36 @@ shimada_event &lt;- shimada_event %&gt;%
 # For the Franklin data:
 franklin_event &lt;- fc_franklin %&gt;%
   select(Cruise,
-         Station = `Station #`) %&gt;%
+         Station = `Station #`,
+         Sample) %&gt;%
   mutate(zone = 5,
          event_type = &quot;FC&quot;,
-         eventID = paste(&quot;IYS2022&quot;, &quot;Franklin&quot;, zone, Station, event_type, maximumDepthInMeters, sep = &quot;-&quot;))
+         maximumDepthInMeters = 5,
+         eventID = paste(&quot;IYS2022&quot;, &quot;Franklin&quot;, zone, Station, event_type, 
+                         maximumDepthInMeters, Sample, sep = &quot;-&quot;))
+
+franklin_meta &lt;- fc_franklin_meta %&gt;% filter(Event_Type == &quot;CTD_Rosette&quot;) %&gt;%
+  select(Time_Start_UTC, Year, Month, Day, Latitude_Start_DecDeg, Longitude_Start_DecDeg, Bottom_Depth_Start) %&gt;%
+  mutate(Month = ifelse(Month == &quot;Feb&quot;, 2, 3),
+         Time = regmatches(Time_Start_UTC, regexpr(&quot;T\\s*\\K.*?(?=\\s*Z)&quot;, Time_Start_UTC, perl=TRUE)),
+         Date = as.Date(as.character(paste(Year, Month, Day, sep = &quot;-&quot;))),
+         eventDate =format_iso_8601(as.POSIXct(paste(Date, Time),
+                                               format = &quot;%Y-%m-%d %H:%M:%S&quot;,
+                                               tz = &quot;UTC&quot;)),
+         eventDate = str_replace(eventDate, &quot;\\+00:00&quot;, &quot;Z&quot;)) %&gt;%
+  slice(rep(1:n(), each = 2)) # Duplicate each row because there were measurements at 25 and 50m, which we need to cbind later
+
+# Final franklin metadata data table:
+franklin_meta &lt;- cbind(franklin_event, franklin_meta) %&gt;%
+  select(eventID, eventDate, Year, Month, Day, 
+         decimalLatitude = Latitude_Start_DecDeg,
+         decimalLongitude = Longitude_Start_DecDeg,
+         maximumDepthInMeters)
 
 # Combine dataframe into single event core:
-fc_event &lt;- rbind(tinro_event, shimada_event, franklin_event) %&gt;%
+fc_event &lt;- rbind(tinro_event, shimada_event, franklin_meta)
+
+fc_event &lt;- fc_event %&gt;% 
   mutate(language = &quot;en&quot;,
          modified = lubridate::today(),
          minimumDepthInMeters = maximumDepthInMeters,
@@ -435,8 +470,11 @@ fc_event &lt;- rbind(tinro_event, shimada_event, franklin_event) %&gt;%
          geodeticDatum = &quot;WGS84&quot;,
          datasetDOI = &quot;https://doi.org/10.21966/j26w-by50&quot;,
          bibliographicCitation = &quot;Eisner, L. B., &amp; Lomas, M. W. (2022). Flow Cytometry data from the R/V TINRO, NOAA Bell M. Shimada and CCGS Sir John Franklin during the 2022 International Year of the Salmon Pan-Pacific Winter High Seas Expedition [Data set]. North Pacific Anadromous Fish Commission. https://doi.org/10.21966/j26w-by50&quot;,
-         institutionCode = &quot; &quot;,
-         institutionID = &quot; &quot;)
+         institutionCode = &quot;NOAA&quot;,
+         institutionID = &quot;https://edmo.seadatanet.org/report/3588&quot;,
+         sampleSizeValue = 0.5,
+         sampleSizeUnit = &quot;millilitres&quot;,
+         samplingProtocol = &quot;https://doi.org/10.1016/j.dsr2.2012.02.011&quot;)
 
 # Save locally: 
 write_csv(fc_event, here(&quot;standardized_data&quot;, &quot;fc2022_event.csv&quot;))
@@ -456,17 +494,30 @@ fc_tinro_occ &lt;- fc_tinro %&gt;%
 fc_shimada_occ &lt;- fc_shimada %&gt;%
   mutate(zone = 4,
          event_type = &quot;FC&quot;,
-         eventID = paste(&quot;IYS2022&quot;, &quot;Shimada&quot;, zone, Station, event_type, `Nominal Depth [m]`, sep = &quot;-&quot;)) %&gt;%
+         eventID = paste(&quot;IYS2022&quot;, &quot;Shimada&quot;, zone, Station, event_type, 
+                         `Nominal Depth [m]`, sep = &quot;-&quot;)) %&gt;%
   select(eventID, `Synechococcus [cells/ml]`:`Cryptophytes [cells/ml]`) %&gt;%
   pivot_longer(`Synechococcus [cells/ml]`:`Cryptophytes [cells/ml]`,
                names_to = &quot;species&quot;, 
                values_to = &quot;cells/ml&quot;)
 
 # For Franklin:
+# Add column for depth at which sampling took place, which according to Lisa Eisner for the Franklin was 5m.
+# The Franklin took replicate samples, whereas the Shimada took samples at 5, 25, and 50, and the TINRO only at approximately 5m. 
 
+fc_franklin_occ &lt;- fc_franklin %&gt;%
+  mutate(zone = 5,
+         event_type = &quot;FC&quot;,
+         sampling_depth = 5,
+         eventID = paste(&quot;IYS2022&quot;, &quot;Franklin&quot;, zone, `Station #`, event_type, 
+                         sampling_depth, Sample, sep = &quot;-&quot;)) %&gt;%
+  select(eventID, `Synechococcus [cells/ml]`:`Cryptophytes [cells/ml]`) %&gt;%
+  pivot_longer(`Synechococcus [cells/ml]`:`Cryptophytes [cells/ml]`,
+               names_to = &quot;species&quot;,
+               values_to = &quot;cells/ml&quot;)
 
 # Combine occurrence
-fc_occ &lt;- rbind(fc_tinro_occ, fc_shimada_occ) %&gt;%
+fc_occ &lt;- rbind(fc_tinro_occ, fc_shimada_occ, fc_franklin_occ) %&gt;%
   rename(scientificName = species)
 
 fc_occ$scientificName &lt;- gsub(&quot;\\[.*?\\]&quot;,&quot;&quot;, as.character(fc_occ$scientificName)) %&gt;% trimws()
@@ -478,6 +529,7 @@ fc_occ$scientificName &lt;- gsub(&quot;Nanoeukaryotes&quot;, &quot;Eukaryota&quo
 fc_occ$scientificName &lt;- gsub(&quot;Cryptophytes&quot;, &quot;Cryptophyta&quot;, fc_occ$scientificName)
 
 fc_occ &lt;- fc_occ %&gt;%
+  group_by(eventID) %&gt;%
   mutate(
     occurrenceID = paste(eventID, row_number(), sep = &quot;-&quot;),
     scientificNameID = case_when(
@@ -485,36 +537,104 @@ fc_occ &lt;- fc_occ %&gt;%
     scientificName == &quot;Eukaryota&quot; ~ &quot;urn:lsid:algaebase.org:taxname:86701&quot;,
     scientificName == &quot;Cryptophyta&quot; ~ &quot;urn:lsid:marinespecies.org:taxname:17638&quot;),
     occurrenceStatus = &quot;present&quot;,
-    basisOfRecord = &quot;MachineObservation&quot;)
+    basisOfRecord = &quot;MachineObservation&quot;,
+    recordedBy = &quot;Michael W. Lomas&quot;) %&gt;%
+    ungroup() %&gt;%
+    select(-`cells/ml`)
 
 # Save locally: 
 write_csv(fc_occ, here(&quot;standardized_data&quot;, &quot;fc2022_occurrence.csv&quot;))
 fc_occ[duplicated(fc_occ$occurrenceID),] # should be none. </code></pre>
 <p>Create extended measurement or fact (eMOF) extension:</p>
-<pre class="r"><code>fc_tinro_emof &lt;- fc_tinro %&gt;%
+<pre class="r"><code># For TINRO:
+fc_tinro_emof &lt;- fc_tinro %&gt;%
   mutate(zone = 3,
          event_type = &quot;FC&quot;,
          eventID = paste(&quot;IYS2022&quot;, &quot;TINRO&quot;, zone, Station, event_type, `Nominal Depth [m]`, sep = &quot;-&quot;)) %&gt;%
+  select(eventID,`Synechococcus [cells/ml]`:`Crypto biomass (ug C/ml)`)
+
+fc_shimada_emof &lt;- fc_shimada %&gt;%
+  mutate(zone = 4, 
+         event_type = &quot;FC&quot;,
+         eventID = paste(&quot;IYS2022&quot;, &quot;Shimada&quot;, zone, Station, event_type, 
+                         `Nominal Depth [m]`, sep = &quot;-&quot;)) %&gt;%
+  select(eventID,`Synechococcus [cells/ml]`:`Crypto biomass (ug C/ml)`)
+
+fc_franklin_emof &lt;- fc_franklin %&gt;%
+  mutate(zone = 5,
+         `Nominal Depth [m]` = 5,
+         event_type = &quot;FC&quot;,
+         eventID = paste(&quot;IYS2022&quot;, &quot;Franklin&quot;, zone, `Station #`, 
+                         event_type, `Nominal Depth [m]`, Sample, sep = &quot;-&quot;)) %&gt;%
   select(eventID,`Synechococcus [cells/ml]`:`Crypto biomass (ug C/ml)`) %&gt;%
+  rename(`Syn biomass (ug C/L)` = `Synechococcus biomass (ug C/L)`)
+
+# Combine these into extended measurement of facts dataframe:
+fc_emof &lt;- rbind(fc_tinro_emof, fc_shimada_emof, fc_franklin_emof)
+
+# Grab the eventID and occurrenceID from the fc_occ dataframe:
+occ &lt;- fc_occ %&gt;% select(eventID, occurrenceID)
+fc_emof &lt;- left_join(fc_emof, occ, by = &quot;eventID&quot;)
+
+fc_emof &lt;- fc_emof %&gt;%
+  mutate_all(as.character) %&gt;%
   pivot_longer(`Synechococcus [cells/ml]`:`Crypto biomass (ug C/ml)`,
                names_to = &quot;species&quot;,
                values_to = &quot;value&quot;) %&gt;%
   mutate(species = gsub(&quot;[&quot;, &quot;(&quot;, species, fixed = TRUE),
          species = gsub(&quot;]&quot;, &quot;)&quot;, species, fixed = TRUE),
-         unit_of_measurement = gsub(&quot;[\\(\\)]&quot;, &quot;&quot;, regmatches(species, gregexpr(&quot;(?&lt;=\\().*?(?=\\))&quot;, species, perl=T))),
+         unit_of_measurement = gsub(&quot;[\\(\\)]&quot;, &quot;&quot;, regmatches(species, 
+                                                               gregexpr(&quot;(?&lt;=\\().*?(?=\\))&quot;, species,
+                                                                        perl=T))),
          species = gsub(&quot;\\s*\\([^\\)]+\\)&quot;,&quot;&quot;, species),
          species = gsub(&quot;Syn biomass&quot;, &quot;Synechococcus&quot;, species),
          species = gsub(&quot;Picoeuk biomass&quot;, &quot;Picoeukaryotes&quot;, species),
          species = gsub(&quot;Nano euk biomass&quot;, &quot;Nanoeukaryotes&quot;, species),
-         species = gsub(&quot;Crypto biomass&quot;, &quot;Cryptophytes&quot;, species)) %&gt;%
+         species = gsub(&quot;Crypto biomass&quot;, &quot;Cryptophytes&quot;, species))
+
+fc_emof &lt;- fc_emof %&gt;%
   pivot_wider(names_from = unit_of_measurement,
               values_from = value) %&gt;%
   mutate(microbial_fc_group_name = case_when(
     species == &quot;Synechococcus&quot; ~ &quot;OraPicoProk&quot;,
     species == &quot;Picoeukaryotes&quot; ~ &quot;RedPico&quot;,
     species == &quot;Nanoeukaryotes&quot; ~ &quot;RedRedNano&quot;,
-    species == &quot;Cryptophytes&quot; ~ &quot;OraNano&quot;)) %&gt;%
-  pivot_longer(species:)</code></pre>
+    species == &quot;Cryptophytes&quot; ~ &quot;OraNano&quot;))
+
+fc_emof &lt;- fc_emof %&gt;%
+  mutate_all(as.character) %&gt;%
+  pivot_longer(`cells/ml`:microbial_fc_group_name,
+               names_to = &quot;measurementType&quot;,
+               values_to = &quot;measurementValue&quot;) %&gt;%
+  mutate(measurementValueID = case_when(
+    measurementValue == &quot;OraPicoProk&quot; ~ &quot;http://vocab.nerc.ac.uk/collection/F02/current/F0200003/&quot;,
+    measurementValue == &quot;RedPico&quot; ~ &quot;http://vocab.nerc.ac.uk/collection/F02/current/F0200004/&quot;,
+    measurementValue == &quot;OraNano&quot; ~ &quot;http://vocab.nerc.ac.uk/collection/F02/current/F0200006/&quot;,
+    measurementValue == &quot;RedRedNano&quot; ~ &quot;http://vocab.nerc.ac.uk/collection/F02/current/F0200005/&quot;),
+        measurementUnit = case_when(
+    measurementType == &quot;cells/ml&quot; ~ &quot;cells per milliliter&quot;,
+    measurementType == &quot;fg POC/cell&quot; ~ &quot;femtogram&quot;,
+    measurementType == &quot;ug C/L&quot; ~ &quot;microgram carbon per liter&quot;,
+    measurementType == &quot;ug C/ml&quot; ~ &quot;microgram carbon per milliliter&quot;),
+        measurementUnitID = case_when(
+    measurementUnit == &quot;cells per milliliter&quot; ~ &quot;http://vocab.nerc.ac.uk/collection/P06/current/UCML/&quot;,
+    measurementUnit == &quot;femtogram&quot; ~ &quot;http://vocab.nerc.ac.uk/collection/P06/current/FMTG/&quot;, 
+    measurementUnit == &quot;microgram carbon per liter&quot; ~ &quot;http://vocab.nerc.ac.uk/collection/P06/current/UGPL/&quot;,
+    measurementUnit == &quot;microgram carbon per milliliter&quot; ~ &quot;http://vocab.nerc.ac.uk/collection/P06/current/UUGS/&quot;),
+        measurementType = case_when(
+    measurementType == &quot;cells/ml&quot; ~ &quot;Abundance of cells per milliliter&quot;,
+    measurementType %in% c(&quot;ug C/L&quot;, &quot;ug C/ml&quot;) ~ &quot;Biomass as carbon per unit volume&quot;,
+    measurementType == &quot;fg POC/cell&quot; ~ &quot;Particulate Organic Carbon per cell&quot;),
+        measurementTypeID = case_when(
+    measurementType == &quot;Abundance of cells per milliliter&quot; ~ &quot;http://vocab.nerc.ac.uk/collection/P01/current/PYTTAFTX/&quot;,
+    measurementType == &quot;Biomass as carbon per unit volume&quot; ~ &quot; &quot;, #TODO: Update with https://github.com/nvs-vocabs/P01/issues/195 resolution
+    measurementType == &quot;Particulate Organic Carbon per cell&quot; ~ &quot; &quot;)) %&gt;% #TODO: Update with https://github.com/nvs-vocabs/P01/issues/194 resolution)) %&gt;%
+  select(-species) %&gt;%
+  mutate(measurementID = paste(occurrenceID, row_number(), sep = &quot;-&quot;))
+
+# Save locally: 
+write_csv(fc_emof, here(&quot;standardized_data&quot;, &quot;fc2022_emof.csv&quot;))
+fc_emof[duplicated(fc_emof$measurementID),] # should be none. </code></pre>
 </div>
 
 

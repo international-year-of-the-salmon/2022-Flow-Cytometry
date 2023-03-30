@@ -20,6 +20,7 @@ library(Hmisc)
 ```
 
 ## Download required files from other public repositories:
+
 ```{r download, eval = FALSE}
 download.file("https://github.com/international-year-of-the-salmon/2022-Franklin-CTD-Rosette/blob/main/IYS_Data_Template/IYS_Data_Template.xlsx?raw=true", here::here("original_data", "IYS2022_Franklin_Data.xlsx"), quiet = TRUE, mode = "wb")
 ```
@@ -196,6 +197,7 @@ fc_occ$scientificName <- gsub("Nanoeukaryotes", "Eukaryota", fc_occ$scientificNa
 fc_occ$scientificName <- gsub("Cryptophytes", "Cryptophyta", fc_occ$scientificName)
 
 fc_occ <- fc_occ %>%
+  group_by(eventID) %>%
   mutate(
     occurrenceID = paste(eventID, row_number(), sep = "-"),
     scientificNameID = case_when(
@@ -204,7 +206,9 @@ fc_occ <- fc_occ %>%
     scientificName == "Cryptophyta" ~ "urn:lsid:marinespecies.org:taxname:17638"),
     occurrenceStatus = "present",
     basisOfRecord = "MachineObservation",
-    recordedBy = "Michael W. Lomas")
+    recordedBy = "Michael W. Lomas") %>%
+    ungroup() %>%
+    select(-`cells/ml`)
 
 # Save locally: 
 write_csv(fc_occ, here("standardized_data", "fc2022_occurrence.csv"))
@@ -239,6 +243,11 @@ fc_franklin_emof <- fc_franklin %>%
 
 # Combine these into extended measurement of facts dataframe:
 fc_emof <- rbind(fc_tinro_emof, fc_shimada_emof, fc_franklin_emof)
+
+# Grab the eventID and occurrenceID from the fc_occ dataframe:
+occ <- fc_occ %>% select(eventID, occurrenceID)
+fc_emof <- left_join(fc_emof, occ, by = "eventID")
+
 fc_emof <- fc_emof %>%
   mutate_all(as.character) %>%
   pivot_longer(`Synechococcus [cells/ml]`:`Crypto biomass (ug C/ml)`,
@@ -274,17 +283,26 @@ fc_emof <- fc_emof %>%
     measurementValue == "RedPico" ~ "http://vocab.nerc.ac.uk/collection/F02/current/F0200004/",
     measurementValue == "OraNano" ~ "http://vocab.nerc.ac.uk/collection/F02/current/F0200006/",
     measurementValue == "RedRedNano" ~ "http://vocab.nerc.ac.uk/collection/F02/current/F0200005/"),
+        measurementUnit = case_when(
+    measurementType == "cells/ml" ~ "cells per milliliter",
+    measurementType == "fg POC/cell" ~ "femtogram",
+    measurementType == "ug C/L" ~ "microgram carbon per liter",
+    measurementType == "ug C/ml" ~ "microgram carbon per milliliter"),
         measurementUnitID = case_when(
-    measurementType == "cells/ml" ~ "http://vocab.nerc.ac.uk/collection/P06/current/UCML/",
-    measurementType == "fg POC/cell" ~ " ",
-    measurementType == "ug C/L" ~ "http://vocab.nerc.ac.uk/collection/P06/current/UGPL/",
-    measurementType == "ug C/ml" ~ "http://vocab.nerc.ac.uk/collection/P06/current/UUGS/"),
+    measurementUnit == "cells per milliliter" ~ "http://vocab.nerc.ac.uk/collection/P06/current/UCML/",
+    measurementUnit == "femtogram" ~ "http://vocab.nerc.ac.uk/collection/P06/current/FMTG/", 
+    measurementUnit == "microgram carbon per liter" ~ "http://vocab.nerc.ac.uk/collection/P06/current/UGPL/",
+    measurementUnit == "microgram carbon per milliliter" ~ "http://vocab.nerc.ac.uk/collection/P06/current/UUGS/"),
         measurementType = case_when(
-    measurementType == "cells/ml" ~ "Concentration of cells per volume",
+    measurementType == "cells/ml" ~ "Abundance of cells per milliliter",
     measurementType %in% c("ug C/L", "ug C/ml") ~ "Biomass as carbon per unit volume",
-    measurementType == "fg POC/cell" ~ "Particulate Organic Carbon per cell")) %>%
+    measurementType == "fg POC/cell" ~ "Particulate Organic Carbon per cell"),
+        measurementTypeID = case_when(
+    measurementType == "Abundance of cells per milliliter" ~ "http://vocab.nerc.ac.uk/collection/P01/current/PYTTAFTX/",
+    measurementType == "Biomass as carbon per unit volume" ~ " ", #TODO: Update with https://github.com/nvs-vocabs/P01/issues/195 resolution
+    measurementType == "Particulate Organic Carbon per cell" ~ " ")) %>% #TODO: Update with https://github.com/nvs-vocabs/P01/issues/194 resolution)) %>%
   select(-species) %>%
-  mutate(measurementID = paste(eventID, row_number(), sep = "-"))
+  mutate(measurementID = paste(occurrenceID, row_number(), sep = "-"))
 
 # Save locally: 
 write_csv(fc_emof, here("standardized_data", "fc2022_emof.csv"))
