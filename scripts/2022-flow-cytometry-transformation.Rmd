@@ -130,6 +130,7 @@ fc_event <- fc_event %>%
          minimumDepthInMeters = maximumDepthInMeters,
          license = "https://creativecommons.org/licenses/by/4.0/legalcode",
          footprintWKT = paste("POINT", " (", fc_event$decimalLongitude, " ", fc_event$decimalLatitude, ")"),
+         coordinateUncertaintyInMeters <- obistools::calculate_centroid(footprintWKT)[3],
          geodeticDatum = "WGS84",
          datasetDOI = "https://doi.org/10.21966/j26w-by50",
          bibliographicCitation = "Eisner, L. B., & Lomas, M. W. (2022). Flow Cytometry data from the R/V TINRO, NOAA Bell M. Shimada and CCGS Sir John Franklin during the 2022 International Year of the Salmon Pan-Pacific Winter High Seas Expedition [Data set]. North Pacific Anadromous Fish Commission. https://doi.org/10.21966/j26w-by50",
@@ -297,7 +298,8 @@ fc_emof <- fc_emof %>%
         measurementType = case_when(
     measurementType == "cells/ml" ~ "Abundance of cells per milliliter",
     measurementType %in% c("ug C/L", "ug C/ml") ~ "Biomass as carbon per unit volume",
-    measurementType == "fg POC/cell" ~ "Particulate Organic Carbon per cell"),
+    measurementType == "fg POC/cell" ~ "Particulate Organic Carbon per cell",
+    measurementValue %in% c("OraPicoProk", "RedPico", "RedRedNano", "OraNano") ~ "Functional microbial group"),
         measurementTypeID = case_when(
     measurementType == "Abundance of cells per milliliter" ~ "http://vocab.nerc.ac.uk/collection/P01/current/PYTTAFTX/",
     measurementType == "Biomass as carbon per unit volume" ~ " ", #TODO: Update with https://github.com/nvs-vocabs/P01/issues/195 resolution
