@@ -302,8 +302,8 @@ fc_emof <- fc_emof %>%
     measurementValue %in% c("OraPicoProk", "RedPico", "RedRedNano", "OraNano") ~ "Functional microbial group"),
         measurementTypeID = case_when(
     measurementType == "Abundance of cells per milliliter" ~ "http://vocab.nerc.ac.uk/collection/P01/current/PYTTAFTX/",
-    measurementType == "Biomass as carbon per unit volume" ~ " ", #TODO: Update with https://github.com/nvs-vocabs/P01/issues/195 resolution
-    measurementType == "Particulate Organic Carbon per cell" ~ " ")) %>% #TODO: Update with https://github.com/nvs-vocabs/P01/issues/194 resolution)) %>%
+    measurementType == "Biomass as carbon per unit volume" ~ "http://vocab.nerc.ac.uk/collection/P01/current/FCBIOL12/",
+    measurementType == "Particulate Organic Carbon per cell" ~ "http://vocab.nerc.ac.uk/collection/P01/current/MAOCCB11/")) %>%
   select(-species) %>%
   group_by(occurrenceID) %>%
   mutate(measurementID = paste(occurrenceID, row_number(), sep = "-")) %>%
